@@ -43,9 +43,56 @@ fn sock_error_msg(size: usize, msg: String) -> Error {
     get_RpcStatus(Code::INVALID_ARGUMENT, msg)
 }
 
+fn read_count(fd: RawFd, count: usize) -> Result<Vec<u8>> {
+    let mut v: Vec<u8> = vec![0; count];
+    let mut len = 0;
+
+    loop {
+        match recv(fd, &mut v[len..], MsgFlags::empty()) {
+            Ok(l) => {
+                len += l;
+                if len == count {
+                    break;
+                }
+            }
+
+            Err(e) => {
+                if e != ::nix::Error::from_errno(::nix::errno::Errno::EINTR) {
+                    return Err(Error::Socket(e.to_string()));
+                }
+            }
+        }
+    }
+
+    Ok(v.to_vec())
+}
+
+fn write_count(fd: RawFd, buf: &[u8], count: usize) -> Result<(usize)> {
+    let mut len = 0;
+
+    loop {
+        match send(fd, &buf[len..], MsgFlags::empty()) {
+            Ok(l) => {
+                len += l;
+                if len == count {
+                    break;
+                }
+            }
+
+            Err(e) => {
+                if e != ::nix::Error::from_errno(::nix::errno::Errno::EINTR) {
+                    return Err(Error::Socket(e.to_string()));
+                }
+            }
+        }
+    }
+
+    Ok(len)
+}
+
 fn read_message_header(fd: RawFd) -> Result<message_header> {
-    let mut buf = [0u8; MESSAGE_HEADER_LENGTH];
-    let size = recv(fd, &mut buf, MsgFlags::empty()).map_err(|e| Error::Socket(e.to_string()))?;
+    let mut buf = read_count(fd, MESSAGE_HEADER_LENGTH)?;
+    let size = buf.len();
     if size != MESSAGE_HEADER_LENGTH {
         return Err(sock_error_msg(
             size,
@@ -84,10 +131,8 @@ pub fn read_message(fd: RawFd) -> Result<(message_header, Vec<u8>)> {
         ));
     }
 
-    let mut buf: Vec<u8> = Vec::new();
-    buf.resize(mh.Length as usize, 0);
-    let size = recv(fd, buf.as_mut_slice(), MsgFlags::empty())
-        .map_err(|e| Error::Socket(e.to_string()))?;
+    let mut buf = read_count(fd, mh.Length as usize)?;
+    let size = buf.len();
     if size != mh.Length as usize {
         return Err(sock_error_msg(
             size,
@@ -109,7 +154,7 @@ fn write_message_header(fd: RawFd, mh: message_header) -> Result<()> {
     buf[8] = mh.Type;
     buf[9] = mh.Flags;
 
-    let size = send(fd, &buf, MsgFlags::empty()).map_err(|e| Error::Socket(e.to_string()))?;
+    let size = write_count(fd, &buf, MESSAGE_HEADER_LENGTH)?;
     if size != MESSAGE_HEADER_LENGTH {
         return Err(sock_error_msg(
             size,
@@ -123,7 +168,7 @@ fn write_message_header(fd: RawFd, mh: message_header) -> Result<()> {
 pub fn write_message(fd: RawFd, mh: message_header, buf: Vec<u8>) -> Result<()> {
     write_message_header(fd, mh)?;
 
-    let size = send(fd, &buf, MsgFlags::empty()).map_err(|e| Error::Socket(e.to_string()))?;
+    let size = write_count(fd, &buf, buf.len())?;
     if size != buf.len() {
         return Err(sock_error_msg(
             size,
