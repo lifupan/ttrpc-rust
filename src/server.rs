@@ -103,13 +103,13 @@ fn start_method_handler_thread(fd: RawFd,
                 Err(x) => {
                     match x {
                         Error::Socket(y) => {
-                            trace!("Socket error {}", y);
+                            trace!(sl!(), "Socket error {}", y);
                             quit.store(true, Ordering::SeqCst);
                             control_tx.try_send(());
                             break;
                         },
                         _ => {
-                            trace!("Others error {:?}", x);
+                            trace!(sl!(), "Others error {:?}", x);
                             continue;
                         },
                     }
@@ -126,14 +126,14 @@ fn start_method_handler_thread(fd: RawFd,
                 let mut res = Response::new();
                 res.set_status(status);
                 if let Err(x) = response_to_channel(mh.StreamID, res, res_tx.clone()) {
-                    debug!("response_to_channel get error {:?}", x);
+                    debug!(sl!(), "response_to_channel get error {:?}", x);
                     quit.store(true, Ordering::SeqCst);
                     control_tx.try_send(());
                     break;
                 }
                 continue;
             }
-            trace!("Got Message request {:?}", req);
+            trace!(sl!(), "Got Message request {:?}", req);
 
             let path = format!("/{}/{}", req.service, req.method);
             let method;
@@ -144,7 +144,7 @@ fn start_method_handler_thread(fd: RawFd,
                 let mut res = Response::new();
                 res.set_status(status);
                 if let Err(x) = response_to_channel(mh.StreamID, res, res_tx.clone()) {
-                    debug!("response_to_channel get error {:?}", x);
+                    debug!(sl!(), "response_to_channel get error {:?}", x);
                     quit.store(true, Ordering::SeqCst);
                     control_tx.try_send(());
                     break;
@@ -153,7 +153,7 @@ fn start_method_handler_thread(fd: RawFd,
             }
             let ctx = TtrpcContext{fd: fd, mh: mh, res_tx: res_tx.clone()};
             if let Err(x) = method.handler(ctx, req) {
-                debug!("method handle {} get error {:?}", path, x);
+                debug!(sl!(), "method handle {} get error {:?}", path, x);
                 quit.store(true, Ordering::SeqCst);
                 control_tx.try_send(());
                 break;
@@ -277,7 +277,7 @@ impl Server {
             let methods = methods.clone();
             let quit = Arc::new(AtomicBool::new(false));
             thread::spawn(move || {
-                trace!("Got new client");
+                trace!(sl!(), "Got new client");
 
                 // Start response thread
                 let quit_res = quit.clone();
@@ -287,14 +287,14 @@ impl Server {
                         if (quit_res.load(Ordering::SeqCst)) {
                             break;
                         }
-                        trace!("response thread get {:?}", r);
+                        trace!(sl!(), "response thread get {:?}", r);
                         if let Err(e) = write_message(fd, r.0, r.1) {
-                            trace!("write_message got {:?}", e);
+                            trace!(sl!(), "write_message got {:?}", e);
                             quit_res.store(true, Ordering::SeqCst);
                             break;
                         }
                     }
-                    trace!("response thread quit");
+                    trace!(sl!(), "response thread quit");
                 });
 
                 let (control_tx, control_rx): (SyncSender<()>, Receiver<()>) = sync_channel(0);
@@ -320,7 +320,7 @@ impl Server {
                 }
 
                 close(fd);
-                trace!("client thread quit");
+                trace!(sl!(), "client thread quit");
             });
         }
 

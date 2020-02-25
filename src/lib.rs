@@ -13,8 +13,15 @@
 // limitations under the License.
 
 #[macro_use]
-extern crate log;
+extern crate slog;
 
+// Convenience macro to obtain the scope logger
+#[macro_export]
+macro_rules! sl {
+     () => {
+             slog_scope::logger().new(o!("subsystem" => "ttrpc"))
+                 };
+                 }
 #[macro_use]
 pub mod error;
 #[macro_use]

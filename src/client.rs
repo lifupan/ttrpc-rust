@@ -72,7 +72,7 @@ impl Client {
                     recver_tx.send(Err(e));
                 }
             }
-            trace!("Sender quit");
+            trace!(sl!(), "Sender quit");
         });
 
         //Recver
@@ -89,7 +89,7 @@ impl Client {
                 let mut rs = FdSet::new();
                 rs.insert(recver_fd);
                 rs.insert(fd);
-                select(bigfd, Some(&mut rs), None, None, None).unwrap();
+                select(bigfd, Some(&mut rs), None, None, None).unwrap(); 
                 if rs.contains(recver_fd) {
                     break;
                 } else if !rs.contains(fd) {
@@ -106,11 +106,11 @@ impl Client {
                     Err(x) => {
                         match x {
                             Error::Socket(y) => {
-                                trace!("Socket error {}", y);
+                                trace!(sl!(), "Socket error {}", y);
                                 break;
                             },
                             _ => {
-                                trace!("Others error {:?}", x);
+                                trace!(sl!(), "Others error {:?}", x);
                                 continue;
                             },
                         }
@@ -120,7 +120,7 @@ impl Client {
                 let recver_tx = match(map.get(&mh.StreamID)) {
                     Some(tx) => { tx },
                     None => {
-                        debug!("Recver got unknown packet {:?} {:?}", mh, buf);
+                        debug!(sl!(), "Recver got unknown packet {:?} {:?}", mh, buf);
                         continue;
                     },
                 };
@@ -134,7 +134,7 @@ impl Client {
 
                 map.remove(&mh.StreamID);
             }
-            trace!("Recver quit");
+            trace!(sl!(),"Recver quit");
         });
 
         Client { 
@@ -145,17 +145,30 @@ impl Client {
     }
     
     pub fn request(&self, req: Request) -> Result<Response> {
+        info!(sl!(), "---------------------------------------------ttrpc request");
         let mut buf = Vec::with_capacity(req.compute_size() as usize);
         let mut s = CodedOutputStream::vec(&mut buf);
+        info!(sl!(), "-----2----------------------------------------ttrpc request");
         req.write_to(&mut s).map_err(err_to_Others!(e, ""))?;
+        info!(sl!(), "-------3--------------------------------------ttrpc request");
         s.flush().map_err(err_to_Others!(e, ""))?;
 
         let (tx, rx) = mpsc::sync_channel(0);
 
+        info!(sl!(), "---------4------------------------------------ttrpc request");
         self.sender_tx.send((buf, tx)).map_err(err_to_Others!(e, "Send packet to sender error "))?;
-        let result = rx.recv().map_err(err_to_Others!(e, "Recive packet from recver error "))?;
+        info!(sl!(), "-----5----------------------------------------ttrpc request");
+        let result = match rx.recv() {
+            Ok(re) => re,
+            Err(e) => {
+                info!(sl!(), "=====****************************************============receive pkg error: {}", e);
+                Ok(vec![])
+            }
+        };
 
+        info!(sl!(), "------6---------------------------------------ttrpc request");
         let buf = result?;
+        info!(sl!(), "-------7--------------------------------------ttrpc request");
         let mut s = CodedInputStream::from_bytes(&buf);
         let mut res = Response::new();
         res.merge_from(&mut s).map_err(err_to_Others!(e, "Unpack response error "))?;
@@ -165,6 +178,7 @@ impl Client {
             return Err(Error::RpcStatus((*status).clone()));
         }
 
+        info!(sl!(), "-------8--------------------------------------ttrpc request");
         Ok(res)
     }
 }
@@ -178,7 +192,7 @@ impl Drop for Client_close {
     fn drop(&mut self) {
         close(self.close_fd);
         close(self.fd);
-        trace!("All client is droped");
+        trace!(sl!(), "All client is droped");
     }
 }
 
