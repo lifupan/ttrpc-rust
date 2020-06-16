@@ -30,12 +30,18 @@ pub fn do_listen(listener: RawFd) -> Result<()> {
     listen(listener, 10).map_err(|e| Error::Socket(e.to_string()))
 }
 
-pub fn do_bind(host: &str) -> Result<RawFd> {
+pub fn parse_host(host: &str) -> Result<(String, Vec<&str>)> {
     let hostv: Vec<&str> = host.trim().split("://").collect();
     if hostv.len() != 2 {
         return Err(Error::Others(format!("Host {} is not right", host)));
     }
     let scheme = hostv[0].to_lowercase();
+
+    Ok((scheme, hostv))
+}
+
+pub fn do_bind(host: &str) -> Result<(RawFd, String)> {
+    let (scheme, hostv) = parse_host(host)?;
 
     let sockaddr: SockAddr;
     let fd: RawFd;
@@ -80,7 +86,7 @@ pub fn do_bind(host: &str) -> Result<RawFd> {
 
     bind(fd, &sockaddr).map_err(err_to_Others!(e, ""))?;
 
-    Ok(fd)
+    Ok((fd, scheme))
 }
 
 macro_rules! cfg_sync {

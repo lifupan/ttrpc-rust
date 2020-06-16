@@ -24,10 +24,17 @@ use tokio::{
     prelude::*,
     sync::mpsc::{channel, Receiver, Sender},
 };
+use tokio_vsock::VsockListener;
+
+enum Domain {
+    Unix,
+    Vsock,
+}
 
 pub struct Server {
     listeners: Vec<RawFd>,
     methods: Arc<HashMap<String, Box<dyn MethodHandler + Send + Sync>>>,
+    domain: Domain,
 }
 
 impl Default for Server {
@@ -35,6 +42,7 @@ impl Default for Server {
         Server {
             listeners: Vec::with_capacity(1),
             methods: Arc::new(HashMap::new()),
+            domain: Domain::Unix,
         }
     }
 }
@@ -51,9 +59,12 @@ impl Server {
             ));
         }
 
-        let fd = common::do_bind(host)?;
-        self.listeners.push(fd);
+        let (fd, domain) = common::do_bind(host)?;
+        if domain == "vsock" {
+            self.domain = Domain::Vsock
+        }
 
+        self.listeners.push(fd);
         Ok(self)
     }
 
@@ -77,13 +88,68 @@ impl Server {
             return Err(Error::Others("ttrpc-rust not bind".to_string()));
         }
 
-        let listener = self.listeners[0];
-        common::do_listen(listener)?;
+        let listenfd = self.listeners[0];
+        common::do_listen(listenfd)?;
 
-        Ok(listener)
+        Ok(listenfd)
     }
 
     pub async fn start(&self) -> Result<()> {
+        match self.domain {
+            Domain::Unix => self.start_unix().await,
+            Domain::Vsock => self.start_vsock().await,
+        }
+    }
+
+    pub async fn start_vsock(&self) -> Result<()> {
+        let listenfd = self.listen()?;
+
+        let mut incoming;
+        unsafe {
+            incoming = VsockListener::from_raw_fd(listenfd).incoming();
+        }
+
+        while let Some(result) = incoming.next().await {
+            match result {
+                Ok(stream) => {
+                    let methods = self.methods.clone();
+                    tokio::spawn(async move {
+                        let (mut reader, mut writer) = split(stream);
+                        let (tx, mut rx): (Sender<Vec<u8>>, Receiver<Vec<u8>>) = channel(100);
+
+                        tokio::spawn(async move {
+                            while let Some(buf) = rx.recv().await {
+                                if let Err(e) = writer.write_all(&buf).await {
+                                    error!("write_message got error: {:?}", e);
+                                }
+                            }
+                        });
+
+                        loop {
+                            let tx = tx.clone();
+                            let methods = methods.clone();
+
+                            match receive(&mut reader).await {
+                                Ok(message) => {
+                                    tokio::spawn(async move {
+                                        handle_request(tx, listenfd, methods, message).await;
+                                    });
+                                }
+                                Err(e) => {
+                                    trace!("error {:?}", e);
+                                    break;
+                                }
+                            }
+                        }
+                    });
+                }
+                Err(e) => error!("{:?}", e),
+            }
+        }
+
+        Ok(())
+    }
+    pub async fn start_unix(&self) -> Result<()> {
         let listener = self.listen()?;
         let sys_unix_listener: std::os::unix::net::UnixListener;
         unsafe {
