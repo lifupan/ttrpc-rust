@@ -17,14 +17,18 @@ use crate::ttrpc::{Code, Request};
 use crate::MessageHeader;
 use futures::StreamExt as _;
 use std::os::unix::io::FromRawFd;
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::net::unix::Incoming as UnixIncoming;
+use tokio::stream::Stream;
 use tokio::{
     self,
     io::split,
-    net::UnixListener,
+    net::{UnixListener, UnixStream},
     prelude::*,
     sync::mpsc::{channel, Receiver, Sender},
 };
-use tokio_vsock::VsockListener;
+use tokio_vsock::Incoming as VsockIncoming;
+use tokio_vsock::{VsockListener, VsockStream};
 
 enum Domain {
     Unix,
@@ -95,20 +99,33 @@ impl Server {
     }
 
     pub async fn start(&self) -> Result<()> {
+        let listenfd = self.listen()?;
+
         match self.domain {
-            Domain::Unix => self.start_unix().await,
-            Domain::Vsock => self.start_vsock().await,
+            Domain::Unix => {
+                let sys_unix_listener: std::os::unix::net::UnixListener;
+                unsafe {
+                    sys_unix_listener = std::os::unix::net::UnixListener::from_raw_fd(listenfd);
+                }
+                let mut unix_listener = UnixListener::from_std(sys_unix_listener).unwrap();
+
+                let incoming = unix_listener.incoming();
+                self.real_start::<UnixIncoming, UnixStream>(listenfd, incoming)
+                    .await
+            }
+            Domain::Vsock => unsafe {
+                let incoming = VsockListener::from_raw_fd(listenfd).incoming();
+                self.real_start::<VsockIncoming, VsockStream>(listenfd, incoming)
+                    .await
+            },
         }
     }
 
-    pub async fn start_vsock(&self) -> Result<()> {
-        let listenfd = self.listen()?;
-
-        let mut incoming;
-        unsafe {
-            incoming = VsockListener::from_raw_fd(listenfd).incoming();
-        }
-
+    async fn real_start<I, S>(&self, listenfd: RawFd, mut incoming: I) -> Result<()>
+    where
+        I: Stream<Item = std::result::Result<S, std::io::Error>> + std::marker::Unpin,
+        S: AsyncRead + AsyncWrite + Send + 'static,
+    {
         while let Some(result) = incoming.next().await {
             match result {
                 Ok(stream) => {
@@ -133,55 +150,6 @@ impl Server {
                                 Ok(message) => {
                                     tokio::spawn(async move {
                                         handle_request(tx, listenfd, methods, message).await;
-                                    });
-                                }
-                                Err(e) => {
-                                    trace!("error {:?}", e);
-                                    break;
-                                }
-                            }
-                        }
-                    });
-                }
-                Err(e) => error!("{:?}", e),
-            }
-        }
-
-        Ok(())
-    }
-    pub async fn start_unix(&self) -> Result<()> {
-        let listener = self.listen()?;
-        let sys_unix_listener: std::os::unix::net::UnixListener;
-        unsafe {
-            sys_unix_listener = std::os::unix::net::UnixListener::from_raw_fd(listener);
-        }
-        let mut unix_listener = UnixListener::from_std(sys_unix_listener).unwrap();
-        let mut incoming = unix_listener.incoming();
-
-        while let Some(result) = incoming.next().await {
-            match result {
-                Ok(stream) => {
-                    let methods = self.methods.clone();
-                    tokio::spawn(async move {
-                        let (mut reader, mut writer) = split(stream);
-                        let (tx, mut rx): (Sender<Vec<u8>>, Receiver<Vec<u8>>) = channel(100);
-
-                        tokio::spawn(async move {
-                            while let Some(buf) = rx.recv().await {
-                                if let Err(e) = writer.write_all(&buf).await {
-                                    error!("write_message got error: {:?}", e);
-                                }
-                            }
-                        });
-
-                        loop {
-                            let tx = tx.clone();
-                            let methods = methods.clone();
-
-                            match receive(&mut reader).await {
-                                Ok(message) => {
-                                    tokio::spawn(async move {
-                                        handle_request(tx, listener, methods, message).await;
                                     });
                                 }
                                 Err(e) => {
