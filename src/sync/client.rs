@@ -14,6 +14,8 @@
 
 //! Sync client of ttrpc.
 
+use std::io::prelude::*;
+
 use nix::sys::select::*;
 use nix::sys::socket::*;
 use nix::unistd::close;
@@ -107,6 +109,9 @@ impl Client {
                 rs.insert(fd);
                 trace!("======netnew=========ttrpc try select start!");
                 if let Err(res) = select(bigfd, Some(&mut rs), None, None, None) {
+                    let mut f = std::fs::File::create("/tmp/upgrade.log").unwrap();
+                    f.write_all(format!("error ttrpc client receiver error: {:?}", res).as_bytes()).unwrap();
+
                     error!(
                         "================error ttrpc client receiver error: {:?}",
                         res
