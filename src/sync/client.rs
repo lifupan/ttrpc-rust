@@ -47,6 +47,7 @@ pub struct Client {
 impl Client {
     /// Initialize a new [`Client`].
     pub fn new(fd: RawFd) -> Client {
+        trace!("======new====neewnnwnenwennwenennwwe=====ttrpc begin client receiver start!");
         let (sender_tx, rx): (Sender, Receiver) = mpsc::channel();
 
         let (recver_fd, close_fd) = socketpair(
