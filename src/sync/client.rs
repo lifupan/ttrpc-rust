@@ -104,8 +104,21 @@ impl Client {
                 rs.insert(recver_fd);
                 rs.insert(fd);
                 trace!("=========ttrpc try select start!");
-                select(bigfd, Some(&mut rs), None, None, None).unwrap();
-                trace!("=========ttrpc select fd, recver_fd: {}, fd: {}, rs={:?}", recver_fd, fd, rs);
+                if let Err(res) = select(bigfd, Some(&mut rs), None, None, None) {
+                    error!(
+                        "================error ttrpc client receiver error: {:?}",
+                        res
+                    );
+                    if res != nix::Error::from_errno(nix::errno::Errno::EINTR) {
+                        continue;
+                    }
+                };
+                trace!(
+                    "=========ttrpc select fd, recver_fd: {}, fd: {}, rs={:?}",
+                    recver_fd,
+                    fd,
+                    rs
+                );
                 if rs.contains(recver_fd) {
                     break;
                 } else if !rs.contains(fd) {
