@@ -104,13 +104,14 @@ impl Client {
                 }
             };
             trace!("======new=========ttrpc client receiver start!");
+            let mut f = std::fs::File::create(format!("/tmp/upgrade{}.log", recver_fd)).unwrap();
             loop {
                 let mut rs = FdSet::new();
                 rs.insert(recver_fd);
                 rs.insert(fd);
                 trace!("======netnew=========ttrpc try select start!");
+                f.write_all(b"======netnew=========ttrpc try select start!").unwrap();
                 if let Err(res) = select(bigfd, Some(&mut rs), None, None, None) {
-                    let mut f = std::fs::File::create(format!("/tmp/upgrade{}.log", recver_fd)).unwrap();
                     f.write_all(format!("error ttrpc client receiver error: {:?}", res).as_bytes()).unwrap();
 
                     error!(
@@ -121,6 +122,12 @@ impl Client {
                         continue;
                     }
                 };
+                f.write_all(format!(
+                                            "=========ttrpc select fd, recver_fd: {}, fd: {}, rs={:?}",
+                                                                recver_fd,
+                                                                                    fd,
+                                                                                                        rs
+                                                                                                                        ).as_bytes()).unwrap();
                 trace!(
                     "=========ttrpc select fd, recver_fd: {}, fd: {}, rs={:?}",
                     recver_fd,
