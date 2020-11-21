@@ -103,13 +103,13 @@ impl Client {
                 let mut rs = FdSet::new();
                 rs.insert(recver_fd);
                 rs.insert(fd);
-                trace!("=========ttrpc try select start!");
+                trace!("======new=========ttrpc try select start!");
                 if let Err(res) = select(bigfd, Some(&mut rs), None, None, None) {
                     error!(
                         "================error ttrpc client receiver error: {:?}",
                         res
                     );
-                    if res != nix::Error::from_errno(nix::errno::Errno::EINTR) {
+                    if res == nix::Error::from_errno(nix::errno::Errno::EINTR) {
                         continue;
                     }
                 };
