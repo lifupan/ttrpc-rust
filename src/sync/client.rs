@@ -103,7 +103,9 @@ impl Client {
                 let mut rs = FdSet::new();
                 rs.insert(recver_fd);
                 rs.insert(fd);
+                trace!("=========ttrpc try select start!");
                 select(bigfd, Some(&mut rs), None, None, None).unwrap();
+                trace!("=========ttrpc select fd, recver_fd: {}, fd: {}, rs={:?}", recver_fd, fd, rs);
                 if rs.contains(recver_fd) {
                     break;
                 } else if !rs.contains(fd) {
