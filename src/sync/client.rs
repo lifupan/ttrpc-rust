@@ -91,6 +91,7 @@ impl Client {
         });
 
         //Recver
+        trace!("======new=========ttrpc begin client receiver start!");
         thread::spawn(move || {
             let bigfd = {
                 if fd > recver_fd {
@@ -99,6 +100,7 @@ impl Client {
                     recver_fd + 1
                 }
             };
+            trace!("======new=========ttrpc client receiver start!");
             loop {
                 let mut rs = FdSet::new();
                 rs.insert(recver_fd);
