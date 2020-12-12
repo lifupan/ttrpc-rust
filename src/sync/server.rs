@@ -21,7 +21,7 @@ use nix::unistd::pipe2;
 use protobuf::{CodedInputStream, Message};
 use std::collections::HashMap;
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, sync_channel, Receiver, Sender, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -75,7 +75,7 @@ impl Connection {
 struct ThreadS<'a> {
     fd: RawFd,
     fdlock: &'a Arc<Mutex<()>>,
-    wtc: &'a Arc<AtomicUsize>,
+    wtc: &'a Arc<Mutex<usize>>,
     quit: &'a Arc<AtomicBool>,
     methods: &'a Arc<HashMap<String, Box<dyn MethodHandler + Send + Sync>>>,
     res_tx: &'a MessageSender,
@@ -88,7 +88,7 @@ struct ThreadS<'a> {
 fn start_method_handler_thread(
     fd: RawFd,
     fdlock: Arc<Mutex<()>>,
-    wtc: Arc<AtomicUsize>,
+    wtc: Arc<Mutex<usize>>,
     quit: Arc<AtomicBool>,
     methods: Arc<HashMap<String, Box<dyn MethodHandler + Send + Sync>>>,
     res_tx: MessageSender,
@@ -98,10 +98,13 @@ fn start_method_handler_thread(
 ) {
     thread::spawn(move || {
         while !quit.load(Ordering::SeqCst) {
-            let c = wtc.fetch_add(1, Ordering::SeqCst) + 1;
-            if c > max {
-                wtc.fetch_sub(1, Ordering::SeqCst);
-                break;
+            {
+                let mut c = wtc.lock().unwrap();
+                if *c + 1 > max {
+                    break;
+                } else {
+                    *c += 1;
+                }
             }
 
             let result;
@@ -125,11 +128,14 @@ fn start_method_handler_thread(
                 break;
             }
 
-            let c = wtc.fetch_sub(1, Ordering::SeqCst) - 1;
-            if c < min {
-                control_tx
-                    .try_send(())
-                    .unwrap_or_else(|err| debug!("Failed to try send {:?}", err));
+            {
+                let mut c = wtc.lock().unwrap();
+                *c -= 1;
+                if *c < min {
+                    control_tx
+                        .try_send(())
+                        .unwrap_or_else(|err| debug!("Failed to try send {:?}", err));
+                }
             }
 
             let mh;
@@ -243,9 +249,9 @@ fn start_method_handler_threads(num: usize, ts: &ThreadS) {
 }
 
 fn check_method_handler_threads(ts: &ThreadS) {
-    let c = ts.wtc.load(Ordering::SeqCst);
-    if c < ts.min {
-        start_method_handler_threads(ts.default - c, &ts);
+    let c = ts.wtc.lock().unwrap();
+    if *c < ts.min {
+        start_method_handler_threads(ts.default - *c, &ts);
     }
 }
 
@@ -450,10 +456,11 @@ impl Server {
 
                             let (control_tx, control_rx): (SyncSender<()>, Receiver<()>) =
                                 sync_channel(0);
+                            #[allow(clippy::mutex_atomic)]
                             let ts = ThreadS {
                                 fd,
                                 fdlock: &Arc::new(Mutex::new(())),
-                                wtc: &Arc::new(AtomicUsize::new(0)),
+                                wtc: &Arc::new(Mutex::new(0)),
                                 methods: &methods,
                                 res_tx: &res_tx,
                                 control_tx: &control_tx,
